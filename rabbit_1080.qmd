@@ -1,0 +1,95 @@
+---
+title: "1080 Alternative Scenarios"
+format: html
+editor: visual
+---
+
+## Rabbits
+
+### Setup
+
+```{r setup}
+library(tidyverse)
+library(kableExtra)
+source(here::here("R", "utility_functions.R"))
+rain <- readxl::read_excel("data/params.xlsx", sheet = "rain")
+scenarios <- readxl::read_excel("data/params.xlsx", sheet = "scenario2")
+cost <- readxl::read_excel("data/params.xlsx", sheet = "cost")
+```
+
+### Intrinsic Model conditions
+
+```{r}
+rain_vic <- rain %>% 
+  filter(Location == "Victoria")
+
+quart_rainfall <- rolling_quart(rain_vic$Rainfall)
+monthly_quart_r <- rab_rate(quart_rainfall)
+r_max_schedule <- monthly_quart_r/3
+
+once_annual_control<-c(rep(0, 8), 1, rep(0, 3))   #once annual control in September
+
+# Rabbit densities 
+# 10 km2 landscape
+# maximum 5 rabbits per hectare
+# 5000 rabbits max 
+# 3000 rabbits starting population
+A <- 10
+K <- 5000
+N0 <- 3000
+```
+
+### Control Conditions
+
+
+```{r, fig.height=12, fig.width = 8}
+simulated_scenarios <- list()
+
+twice_annual_control<-c(rep(0, 3), 1, rep(0, 5), 1, rep(0,2)) 
+
+for(i in 1:nrow(scenarios)) {
+  simulated_scenarios[[scenarios$controls[i]]] <- simmer(initial_cull_sched=once_annual_control*scenarios$efficacy[i]/100,
+       prop_cull_sched = twice_annual_control*0.7,
+       reps=250, K=K, N0=N0, Area=A, 
+       sigma=scenarios$stochasticity[i], years=5) %>% 
+  mutate(method=paste("Initial:", scenarios$controls[i], "\n Management: Poison 70% Efficacy 2x yearly"), 
+         Group = scenarios$Group[i])
+}
+
+br <- bind_rows(simulated_scenarios) 
+
+br %>%
+  mutate(years=time/12) %>%
+  mutate(method=factor(method, levels = unique(br$method)))  %>%
+  ggplot(aes(x=years, y=N))+
+  geom_line(aes(group=rep), col="steelblue", alpha=0.05)+
+  stat_summary(geom="line", fun = "median", col="firebrick", lwd=0.3)+
+  stat_summary(geom="line", fun = function(x){quantile(x, 0.025)}, col="firebrick", lty=2, lwd=0.2)+
+  stat_summary(geom="line", fun = function(x){quantile(x, 0.975)}, col="firebrick", lty=2, lwd=0.2)+
+  geom_hline(yintercept=5000, lty=2)+
+  scale_x_continuous(breaks=seq(0, 10, by=5))+
+  ylim(0, NA)+
+  facet_wrap(~method, labeller = labeller(method = ~ paste(.x)), nrow=8)+
+  xlab("Time (years)")+
+  ggtitle("Rabbit control scenarios")+
+  theme_bw()
+```
+
+```{r summary}
+pc <- av_pop_change(br)
+
+kbl(pc  %>%
+  arrange(perc_change)
+  %>% mutate(method = str_replace_all(method, "\n", "<br>")), 
+    digits = 2, format = "html", escape = F) %>%
+  kable_styling()
+```
+
+```{r cost}
+costs <- scenarios %>%
+  left_join(pc) %>%
+  mutate(ic = costkm2*10, 
+         totalcost_1080 = ic+(10*776*2*5), 
+         totalcost_pindone = ic+(10*1376*2*5))
+```
+
